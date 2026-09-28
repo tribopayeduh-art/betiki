@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 200" width="880" height="200">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@1,900&amp;display=swap');
+      .playzada-word {
+        font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-weight: 900;
+        font-style: italic;
+        font-size: 140px;
+        letter-spacing: -6px;
+        fill: #ffffff;
+      }
+    </style>
+    <filter id="crisp-shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#crisp-shadow)">
+    <!-- Spade Icon behind/integrated with 'la' -->
+    <g transform="translate(232, 28) skewX(-14)">
+      <!-- Spade upper body -->
+      <path d="M 45 6 C 25 -26 -28 16 0 68 C 18 96 45 125 45 125 C 45 125 72 96 90 68 C 118 16 65 -26 45 6 Z" fill="#ffffff"/>
+      <!-- Spade base stand -->
+      <path d="M 38 108 L 52 108 L 64 148 L 26 148 Z" fill="#ffffff"/>
+      <!-- Circular inner cut -->
+      <circle cx="45" cy="62" r="16" fill="#09090d"/>
+    </g>
+
+    <!-- Main Wordmark -->
+    <text x="25" y="148" class="playzada-word">playzada</text>
+  </g>
+</svg>
