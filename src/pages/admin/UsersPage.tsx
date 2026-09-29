@@ -40,7 +40,19 @@ export default function UsersPage() {
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
   const [quickBalanceUser, setQuickBalanceUser] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState<number | "ALL">("ALL");
+  const [pageSize, setPageSize] = useState<number | "ALL">(() => {
+    try { const stored = Number(localStorage.getItem("admin-player-page-size")); return [15,25,50,100].includes(stored) ? stored : 25; }
+    catch { return 25; }
+  });
+  const [compactView, setCompactView] = useState(() => { try { return localStorage.getItem("admin-player-compact") === "1"; } catch { return false; } });
+  const [serverSearch, setServerSearch] = useState(false);
+  const [searchScope, setSearchScope] = useState("");
+  const [minDeposits, setMinDeposits] = useState("");
+  const [maxDeposits, setMaxDeposits] = useState("");
+  const [presetName, setPresetName] = useState("");
+  const [savedViews, setSavedViews] = useState<{ name: string; filter: typeof filter; sortBy: typeof sortBy; minDeposits: string; maxDeposits: string; pageSize: number | "ALL" }[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem("admin-player-views") || "[]"); return Array.isArray(v) ? v.slice(0,8) : []; } catch { return []; }
+  });
 
   // Estados do Cofre de Restore & Economia de Leituras
   const [leadsStatus, setLeadsStatus] = useState<any>(null);
@@ -66,6 +78,23 @@ export default function UsersPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const searchAll = async () => {
+    const term = q.trim();
+    if (!term) { setSearchScope(""); return; }
+    setServerSearch(true); setError("");
+    try {
+      const d: any = await adminApi(`/api/admin/users?limit=2000&q=${encodeURIComponent(term)}`);
+      const matches = (d.users || []).map((u: any) => ({...u, displayName: getUserDisplayName(u)}));
+      setUsers(previous => {
+        const merged = new Map(previous.map((u: any) => [u.uid || u.id, u]));
+        for (const u of matches) merged.set(u.uid || u.id, u);
+        return [...merged.values()];
+      });
+      setSearchScope(matches.length ? `${matches.length} correspondência(s) consultadas no servidor. Nomes parciais pesquisam até 2.000 contas recentes; identificadores exatos também encontram contas anteriores.` : "Sem novas correspondências no servidor; confira os filtros ou o identificador.");
+    } catch (e: any) { setError(e.message || "Não foi possível concluir a busca no servidor."); }
+    finally { setServerSearch(false); }
   };
 
   const loadRestoreData = async (queryText = "") => {
@@ -218,14 +247,19 @@ export default function UsersPage() {
   const filteredUsers = useMemo(() => {
     const qLower = q.trim().toLowerCase();
     const cleanQ = qLower.replace(/^#/, "");
+    const digits = qLower.replace(/\D/g, "");
+    const minimum = minDeposits.trim() === "" ? null : Number(minDeposits);
+    const maximum = maxDeposits.trim() === "" ? null : Number(maxDeposits);
     return users.filter(u => {
       if (qLower) {
         const accClean = String(u.accountId || "").replace(/^#/, "").toLowerCase();
         const str = `${u.uid || ""} ${u.accountId || ""} ${accClean} ${u.email || ""} ${u.displayName || ""} ${u.name || ""} ${u.fullName || ""} ${u.cpf || ""} ${u.phone || ""}`.toLowerCase();
-        if (!str.includes(qLower) && (!cleanQ || (!str.includes(cleanQ) && !accClean.includes(cleanQ)))) {
-          return false;
-        }
+        const contactDigits = `${String(u.cpf || "").replace(/\D/g, "")} ${String(u.phone || "").replace(/\D/g, "")}`;
+        if (!str.includes(qLower) && (!cleanQ || (!str.includes(cleanQ) && !accClean.includes(cleanQ))) && !(digits.length >= 4 && contactDigits.includes(digits))) return false;
       }
+      const deposits = Number(u.totalDeposits || 0);
+      if (minimum !== null && Number.isFinite(minimum) && deposits < minimum) return false;
+      if (maximum !== null && Number.isFinite(maximum) && deposits > maximum) return false;
       const bal = Number(u.walletBalance ?? u.balance ?? 0);
       if (filter === "INFLUENCERS") return !!u.influencer;
       if (filter === "ACTIVE") return (u.status || "ACTIVE") === "ACTIVE";
@@ -237,7 +271,7 @@ export default function UsersPage() {
       if (filter === "WITHDRAW_LOCKED") return !!u.withdrawLocked;
       return true;
     });
-  }, [users, filter, q]);
+  }, [users, filter, q, minDeposits, maxDeposits]);
 
   const sortedUsers = useMemo(() => {
     return [...filteredUsers].sort((a, b) => {
@@ -274,7 +308,23 @@ export default function UsersPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [q, filter, sortBy, pageSize]);
+  }, [q, filter, sortBy, pageSize, minDeposits, maxDeposits]);
+
+  useEffect(() => { try { if (pageSize !== "ALL") localStorage.setItem("admin-player-page-size", String(pageSize)); } catch {} }, [pageSize]);
+  useEffect(() => { try { localStorage.setItem("admin-player-compact", compactView ? "1" : "0"); } catch {} }, [compactView]);
+  useEffect(() => { try { localStorage.setItem("admin-player-views", JSON.stringify(savedViews)); } catch {} }, [savedViews]);
+
+  const saveView = () => {
+    const name = presetName.trim().slice(0,32);
+    if (!name) return;
+    const view = { name, filter, sortBy, minDeposits, maxDeposits, pageSize };
+    setSavedViews(current => [...current.filter(item => item.name.toLocaleLowerCase("pt-BR") !== name.toLocaleLowerCase("pt-BR")), view].slice(-8));
+    setPresetName("");
+  };
+  const applyView = (view: typeof savedViews[number]) => {
+    setFilter(view.filter); setSortBy(view.sortBy); setMinDeposits(view.minDeposits); setMaxDeposits(view.maxDeposits); setPageSize(view.pageSize);
+    setCurrentPage(1);
+  };
 
   const influencersList = useMemo(() => {
     return users.filter(u => !!u.influencer);
@@ -816,7 +866,7 @@ export default function UsersPage() {
         /* =========================================================================
            TAB 1: LISTA GERAL DE JOGADORES & FILTROS
            ========================================================================= */
-        <div>
+        <div className={compactView ? "admin-players-list compact" : "admin-players-list"}>
           {/* Painel Moderno Unificado de Busca, Filtros e Segmentação */}
           <div className="filter-bar-container">
             {/* Barra de Pesquisa Integrada */}
@@ -826,7 +876,7 @@ export default function UsersPage() {
                 <input
                   value={q}
                   onChange={e => setQ(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && load(null, false)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void searchAll(); } }}
                   placeholder="Pesquisar por ID (#108429), Nome, E-mail, CPF, Tel ou UID..."
                   style={{
                     width: "100%",
@@ -842,7 +892,7 @@ export default function UsersPage() {
                 {q && (
                   <button
                     type="button"
-                    onClick={() => { setQ(""); void load(null, false); }}
+                    onClick={() => { setQ(""); setSearchScope(""); }}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
                   >
                     <X size={14} />
@@ -853,21 +903,31 @@ export default function UsersPage() {
                 <button
                   className="admin-primary flex-1 sm:flex-initial"
                   style={{ padding: "10px 20px", fontSize: "13px", fontWeight: 700, borderRadius: "10px" }}
-                  onClick={() => load(null, false)}
-                  disabled={loading}
+                  onClick={() => void searchAll()}
+                  disabled={loading || serverSearch}
                 >
-                  {loading ? "Buscando..." : "Pesquisar"}
+                  {serverSearch ? "Consultando..." : "Pesquisar"}
                 </button>
-                {(q || filter !== "ALL") && (
+                {(q || filter !== "ALL" || minDeposits || maxDeposits) && (
                   <button
                     className="admin-secondary"
                     style={{ padding: "10px 14px", fontSize: "12px", borderRadius: "10px" }}
-                    onClick={() => { setQ(""); setFilter("ALL"); void load(null, false); }}
+                    onClick={() => { setQ(""); setFilter("ALL"); setMinDeposits(""); setMaxDeposits(""); setSearchScope(""); }}
                     title="Limpar todos os filtros e busca"
                   >
                     Limpar
                   </button>
                 )}
+              </div>
+            </div>
+
+            <div className="admin-player-search-extra">
+              <label><span>Depósitos totais a partir de (R$)</span><input type="number" min="0" step="0.01" inputMode="decimal" value={minDeposits} onChange={e => setMinDeposits(e.target.value)} placeholder="Qualquer valor" /></label>
+              <label><span>Até (R$)</span><input type="number" min="0" step="0.01" inputMode="decimal" value={maxDeposits} onChange={e => setMaxDeposits(e.target.value)} placeholder="Sem limite" /></label>
+              <span className="admin-player-search-scope">{searchScope || "Busca local imediata. Clique em Pesquisar para consultar identificadores exatos no servidor."}</span>
+              <div className="admin-player-display-options" role="group" aria-label="Densidade da lista">
+                <button type="button" className={compactView ? "active" : ""} onClick={() => setCompactView(true)} aria-pressed={compactView}>Compacto</button>
+                <button type="button" className={!compactView ? "active" : ""} onClick={() => setCompactView(false)} aria-pressed={!compactView}>Confortável</button>
               </div>
             </div>
 
@@ -933,6 +993,8 @@ export default function UsersPage() {
                 <span className="filter-pill-count">{stats.kycApproved}</span>
               </button>
 
+              <button type="button" className={`filter-pill ${filter === "KYC_PENDING" ? "active" : ""}`} onClick={() => setFilter("KYC_PENDING")}><Shield size={13}/><span>KYC pendente</span></button>
+
               <button
                 type="button"
                 className={`filter-pill ${filter === "WITHDRAW_LOCKED" ? "active locked" : ""}`}
@@ -954,13 +1016,18 @@ export default function UsersPage() {
               </button>
             </div>
 
+            <div className="admin-player-saved-views">
+              <div className="admin-player-view-create"><label htmlFor="admin-player-view-name">Salvar combinação de filtros</label><input id="admin-player-view-name" value={presetName} onChange={e => setPresetName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); saveView(); } }} maxLength={32} placeholder="Ex.: KYC pendente" /><button type="button" className="admin-secondary" onClick={saveView} disabled={!presetName.trim()}>Salvar visão</button></div>
+              {!!savedViews.length && <div className="admin-player-view-list" aria-label="Filtros salvos">{savedViews.map(view => <span key={view.name}><button type="button" onClick={() => applyView(view)}>{view.name}</button><button type="button" onClick={() => setSavedViews(current => current.filter(item => item.name !== view.name))} aria-label={`Remover visão ${view.name}`}><X size={13}/></button></span>)}</div>}
+            </div>
+
             {/* Rodapé do Painel com Ordenação e Indicador */}
             <div className="filter-bar-footer">
               <div className="text-xs text-zinc-400 flex items-center gap-1.5">
                 <SlidersHorizontal size={12} className="text-zinc-500" />
                 <span>
                   Mostrando <b>{paginatedUsers.length}</b> de <b>{sortedUsers.length}</b> jogadores
-                  {q || filter !== "ALL" ? ` (Total na Base: ${users.length})` : ""}
+                  {q || filter !== "ALL" ? ` (Contas carregadas: ${users.length})` : ""}
                 </span>
               </div>
 
@@ -1187,6 +1254,7 @@ export default function UsersPage() {
 
           {/* Cards Mobile Altamente Responsivos */}
           <div className="admin-users-mobile">
+            {!paginatedUsers.length && <div className="admin-player-no-results"><Search size={22}/><strong>Nenhum jogador encontrado</strong><p>Revise o termo ou os filtros. Para UID, e-mail, CPF e telefone completos, use Pesquisar.</p><button type="button" className="admin-secondary" onClick={() => { setQ(""); setFilter("ALL"); setMinDeposits(""); setMaxDeposits(""); }}>Limpar busca e filtros</button></div>}
             {paginatedUsers.map(u => {
               const bal = Number(u.walletBalance ?? u.balance ?? 0);
               const accId = u.accountId || formatAccountId(u.uid || u.id);
@@ -1331,7 +1399,7 @@ export default function UsersPage() {
                   : `Mostrando ${(pageSafe - 1) * numPageSize + 1}–${Math.min(pageSafe * numPageSize, totalItems)} de ${totalItems} jogadores`}
               </span>
               <span className="hidden sm:inline">•</span>
-              <span className="text-zinc-400">Total na Base: <b className="text-white">{users.length}</b></span>
+              <span className="text-zinc-400">Contas carregadas: <b className="text-white">{users.length}</b></span>
             </div>
 
             <div className="flex items-center gap-3">

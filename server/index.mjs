@@ -1919,6 +1919,29 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
       docs = await readFirestoreCollectionViaRest("users", { limit: 2000, idToken: req.idToken });
     }
 
+    // Exact identifiers can be found beyond the first page of 2,000 accounts.
+    // Partial name searches remain scoped to the loaded window to avoid unbounded reads.
+    if (qText && firebaseAdminState.privilegedReady) {
+      const direct = [];
+      const raw = String(req.query.q || "").trim();
+      const digits = raw.replace(/\D/g, "");
+      const possibleUids = /^[a-zA-Z0-9_-]{20,128}$/.test(raw) ? [raw] : [];
+      const lookups = [];
+      for (const uid of possibleUids) lookups.push(db.collection("users").doc(uid).get().then(doc => doc.exists ? [doc] : []).catch(() => []));
+      if (raw.includes("@")) lookups.push(db.collection("users").where("email", "==", raw.toLowerCase()).limit(5).get().then(snap => snap.docs).catch(() => []));
+      if (/^#?\d{5,12}$/.test(raw)) {
+        for (const value of new Set([raw, `#${digits}`, digits])) lookups.push(db.collection("users").where("accountId", "==", value).limit(5).get().then(snap => snap.docs).catch(() => []));
+      }
+      if (digits.length >= 10 && digits.length <= 14) {
+        for (const field of ["cpf", "document", "phone"]) {
+          for (const value of new Set([raw, digits])) lookups.push(db.collection("users").where(field, "==", value).limit(5).get().then(snap => snap.docs).catch(() => []));
+        }
+      }
+      for (const group of await Promise.all(lookups)) direct.push(...group);
+      const known = new Set(docs.map(doc => doc.id));
+      for (const doc of direct) if (!known.has(doc.id)) { docs.push(doc); known.add(doc.id); }
+    }
+
     let users = docs.map(d => {
       const data = typeof d.data === "function" ? d.data() : d;
       const uid = d.id || data.uid;
@@ -1967,7 +1990,9 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
       users = users.filter(u => {
         const accClean = String(u.accountId || "").replace(/^#/, "").toLowerCase();
         const str = `${u.uid} ${u.accountId || ""} ${accClean} ${u.email || ""} ${u.displayName || ""} ${u.name || ""} ${u.fullName || ""} ${u.cpf || ""} ${u.phone || ""}`.toLowerCase();
-        return str.includes(qText) || (cleanQ && (str.includes(cleanQ) || accClean.includes(cleanQ)));
+        const digits = qText.replace(/\D/g, "");
+        const contactDigits = `${String(u.cpf || "").replace(/\D/g, "")} ${String(u.phone || "").replace(/\D/g, "")}`;
+        return str.includes(qText) || (cleanQ && (str.includes(cleanQ) || accClean.includes(cleanQ))) || (digits.length >= 4 && contactDigits.includes(digits));
       });
     }
 

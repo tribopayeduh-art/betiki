@@ -1,9 +1,9 @@
-import { Component, useEffect, useState, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
 import {
   Bell, ChevronRight, Gamepad2, Gift, Headphones, Image, LayoutDashboard,
   ListChecks, LogOut, Megaphone, Menu, RefreshCw, Server, Settings,
   ShieldAlert, ShieldCheck, Sparkles, Target, UserCheck, UserCog, Users,
-  Wallet, X, Smartphone, Trophy, CreditCard, Palette, FileBarChart
+  Wallet, X, Smartphone, Trophy, CreditCard, Palette, FileBarChart, Search
 } from "lucide-react";
 import type { User } from "firebase/auth";
 import { subscribeAuth, logout } from "./lib/auth";
@@ -89,6 +89,10 @@ export default function AdminApp() {
   })();
   const [section, setSectionState] = useState<Section>(initialSection);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [navQuery, setNavQuery] = useState("");
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const commandInput = useRef<HTMLInputElement>(null);
   const [readiness, setReadiness] = useState<any>(null);
   const [runtimeError, setRuntimeError] = useState("");
   const [navigating, setNavigating] = useState(false);
@@ -105,9 +109,33 @@ export default function AdminApp() {
     if (next === section) return;
     setNavigating(true);
     setSectionState(next);
+    setMobileMenu(false);
+    setCommandOpen(false);
+    setCommandQuery("");
+    window.scrollTo({ top: 0, behavior: "instant" });
     history.replaceState(null, "", `${location.pathname}${location.search}#admin/${next}`);
     window.setTimeout(() => setNavigating(false), 320);
   };
+
+  useEffect(() => {
+    if (!mobileMenu) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMobileMenu(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", closeOnEscape); document.body.style.overflow = previousOverflow; };
+  }, [mobileMenu]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(open => !open); }
+      if (event.key === "Escape") setCommandOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => { if (commandOpen) window.setTimeout(() => commandInput.current?.focus(), 0); }, [commandOpen]);
 
   useEffect(() => subscribeAuth(next => {
     setUser(next);
@@ -209,12 +237,14 @@ export default function AdminApp() {
 
   return (
     <div className="admin-shell">
-      <AdminSidebar section={section} setSection={setSection} navigating={navigating} mobile={mobileMenu} close={() => setMobileMenu(false)} />
+      {mobileMenu && <button className="admin-menu-backdrop" type="button" aria-label="Fechar menu" onClick={() => setMobileMenu(false)} />}
+      <AdminSidebar section={section} setSection={setSection} navigating={navigating} mobile={mobileMenu} close={() => setMobileMenu(false)} query={navQuery} setQuery={setNavQuery} />
       <div className="admin-main">
         <header className="admin-topbar">
           <button className="admin-mobile-menu" onClick={() => setMobileMenu(true)}><Menu size={20}/></button>
           <div className="admin-topbar-brand"><img src="/borahlogo.png" alt="Borah Bet" onError={e => { if (e.currentTarget.src !== "/borahlogo.png") e.currentTarget.src = "/borahlogo.png"; }}/><div><strong>{sectionNames[section]}</strong></div></div>
           <div className="admin-top-actions">
+            <button className="admin-command-trigger" onClick={() => setCommandOpen(true)} aria-label="Buscar páginas do painel" title="Buscar páginas (Ctrl+K)"><Search size={16}/><span>Buscar</span><kbd>Ctrl K</kbd></button>
             <span className="admin-live-status"><i/> Operação online</span>
             <a
               className="admin-view-site"
@@ -277,7 +307,26 @@ export default function AdminApp() {
             </Suspense>
           </AdminSectionBoundary>
         </main>
+        <nav className="admin-mobile-dock" aria-label="Acesso rápido">
+          {([
+            ["dashboard", LayoutDashboard, "Início"],
+            ["users", Users, "Jogadores"],
+            ["finance", Wallet, "Financeiro"],
+            ["settings", Settings, "Ajustes"],
+          ] as const).map(([id, Icon, label]) => <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)} aria-current={section === id ? "page" : undefined}><Icon size={19}/><span>{label}</span></button>)}
+          <button onClick={() => setMobileMenu(true)} aria-label="Abrir todas as páginas"><Menu size={19}/><span>Mais</span></button>
+        </nav>
       </div>
+      {commandOpen && <div className="admin-command-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setCommandOpen(false); }}>
+        <div className="admin-command-dialog" role="dialog" aria-modal="true" aria-label="Buscar páginas do painel">
+          <div className="admin-command-input"><Search size={20}/><input ref={commandInput} value={commandQuery} onChange={event => setCommandQuery(event.target.value)} placeholder="Qual página você quer abrir?" aria-label="Buscar página" /><button onClick={() => setCommandOpen(false)} aria-label="Fechar busca"><X size={18}/></button></div>
+          <div className="admin-command-results">
+            {(Object.entries(sectionNames) as [Section,string][]).filter(([,label]) => label.toLocaleLowerCase("pt-BR").includes(commandQuery.trim().toLocaleLowerCase("pt-BR"))).map(([id,label]) => <button key={id} onClick={() => setSection(id)}><span>{label}</span><ChevronRight size={16}/></button>)}
+            {!(Object.values(sectionNames) as string[]).some(label => label.toLocaleLowerCase("pt-BR").includes(commandQuery.trim().toLocaleLowerCase("pt-BR"))) && <p>Nenhuma página encontrada.</p>}
+          </div>
+          <small>Use Ctrl+K ou ⌘K para abrir. Esc fecha a busca.</small>
+        </div>
+      </div>}
     </div>
   );
 }
@@ -328,13 +377,17 @@ function AdminSidebar({
   setSection,
   navigating,
   mobile,
-  close
+  close,
+  query,
+  setQuery
 }: {
   section: Section;
   setSection: (s: Section) => void;
   navigating: boolean;
   mobile: boolean;
   close: () => void;
+  query: string;
+  setQuery: (q: string) => void;
 }) {
   const groups: { title: string; items: [Section, any, string, string][] }[] = [
     { title: "OPERAÇÃO", items: [
@@ -372,21 +425,23 @@ function AdminSidebar({
   ];
 
   return (
-    <aside className={`admin-sidebar admin-sidebar-v11 ${mobile ? "open" : ""}`}>
+    <aside className={`admin-sidebar admin-sidebar-v11 ${mobile ? "open" : ""}`} aria-label="Navegação administrativa" aria-hidden={!mobile && typeof window !== "undefined" && window.innerWidth <= 760 ? true : undefined}>
       <div className="admin-sidebar-brand">
         <img className="admin-sidebar-logo" src="/borahlogo.png" alt="Borah Bet" onError={e => { if (e.currentTarget.src !== "/borahlogo.png") e.currentTarget.src = "/borahlogo.png"; }}/>
-        <button onClick={close}><X size={18}/></button>
+        <button onClick={close} aria-label="Fechar menu"><X size={18}/></button>
       </div>
+      <label className="admin-nav-search"><span>Buscar página</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ex.: PIX, usuários, banners" autoComplete="off" /></label>
       <nav>
-        {groups.map(group => (
-          <div className="admin-nav-group" key={group.title}>
+        {groups.map(group => {
+          const items = group.items.filter(([, , title, sub]) => `${title} ${sub}`.toLocaleLowerCase("pt-BR").includes(query.trim().toLocaleLowerCase("pt-BR")));
+          return items.length ? <div className="admin-nav-group" key={group.title}>
             <span className="admin-nav-title">{group.title}</span>
-            {group.items.map(([id, Icon, title, sub]) => (
+            {items.map(([id, Icon, title, sub]) => (
               <button
                 key={id}
                 className={`${section === id ? "active" : ""} ${navigating && section === id ? "nav-loading" : ""}`}
-                onPointerEnter={() => prefetchAdminSection(id)}
-                onFocus={() => prefetchAdminSection(id)}
+                aria-current={section === id ? "page" : undefined}
+                onPointerEnter={e => { if (e.pointerType === "mouse") prefetchAdminSection(id); }}
                 onPointerDown={(e) => e.currentTarget.classList.add("pressed")}
                 onPointerUp={(e) => e.currentTarget.classList.remove("pressed")}
                 onPointerLeave={(e) => e.currentTarget.classList.remove("pressed")}
@@ -396,8 +451,9 @@ function AdminSidebar({
                 <span><b>{title}</b><small>{sub}</small></span>
               </button>
             ))}
-          </div>
-        ))}
+          </div> : null;
+        })}
+        {query && !groups.some(g => g.items.some(([, , title, sub]) => `${title} ${sub}`.toLocaleLowerCase("pt-BR").includes(query.trim().toLocaleLowerCase("pt-BR")))) && <p className="admin-nav-empty">Nenhuma página encontrada.</p>}
       </nav>
       <div className="admin-sidebar-foot">
         <span className="online-dot"/>

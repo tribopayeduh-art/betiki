@@ -28,6 +28,8 @@ export default function SettingsPage() {
   const [form, setForm] = useState<any>({});
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedForm, setSavedForm] = useState<any>(null);
 
   // Live simulation states for Admin preview
   const [previewLocale, setPreviewLocale] = useState<"RU" | "JP">("RU");
@@ -56,6 +58,7 @@ export default function SettingsPage() {
     try {
       const d: any = await adminApi("/api/admin/configuration");
       setForm(d.settings || {});
+      setSavedForm(d.settings || {});
     } catch (e: any) {
       setMsg(e.message);
     } finally {
@@ -348,6 +351,14 @@ export default function SettingsPage() {
   ]);
 
   async function save() {
+    if (saving) return;
+    const min = Number(form.minDeposit ?? 25), max = Number(form.maxDeposit ?? 300);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min < 1 || max < min) {
+      setMsg("Revise os limites de depósito: o mínimo deve ser positivo e não pode superar o máximo.");
+      document.getElementById("admin-config-depositos")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    setSaving(true);
     setMsg("Salvando...");
     try {
       const result: any = await adminApi("/api/admin/configuration", {
@@ -355,11 +366,11 @@ export default function SettingsPage() {
         body: JSON.stringify(form),
       });
       void patchRuntimeValue("runtime/publicSettings", form);
-      if (result?.settings) setForm(result.settings);
-      setMsg(`Configurações salvas com sucesso.`);
+      if (result?.settings) { setForm(result.settings); setSavedForm(result.settings); }
+      setMsg("Configurações salvas com sucesso.");
     } catch (e: any) {
       setMsg(`Falha ao salvar: ${e.message || "erro desconhecido"}`);
-    }
+    } finally { setSaving(false); }
   }
 
   // Simulation evaluator
@@ -431,17 +442,25 @@ export default function SettingsPage() {
     }
   }
 
+  const dirty = savedForm !== null && JSON.stringify(form) !== JSON.stringify(savedForm);
+  const sections = [
+    ["geral", "Geral"], ["bonus", "Bônus"], ["depositos", "Depósitos"], ["saques", "Saques"],
+    ["popup", "Popup"], ["banner", "Banner"], ["funil", "Funil"], ["taxas", "Taxas"], ["links", "Links"]
+  ];
+
   return <>
-    <PageTitle eyebrow="SISTEMA" title="Configurações da plataforma" text="Regras financeiras, bônus de idioma, popup, banners, links e comportamento geral." action={<button className="admin-primary" onClick={save}>Salvar tudo</button>} />
+    <PageTitle eyebrow="SISTEMA" title="Configurações da plataforma" text="Encontre rapidamente cada área. Alterações gerais entram em vigor ao salvar." action={<button className="admin-primary" onClick={save} disabled={saving || loading || !dirty}>{saving ? "Salvando..." : dirty ? "Salvar alterações" : "Tudo salvo"}</button>} />
+    {!loading && <nav className="admin-config-jump" aria-label="Seções de configuração">{sections.map(([key, label]) => <button key={key} type="button" onClick={() => document.getElementById(`admin-config-${key}`)?.scrollIntoView({behavior:"smooth",block:"start"})}>{label}</button>)}<a href="#admin/tracking">Pixels e Utmify</a><a href="#admin/dotfy">PIX</a><a href="#admin/visualbuilder">Visual</a></nav>}
+    {dirty && <div className="admin-config-savebar"><span>Alterações não salvas</span><button type="button" className="admin-secondary" onClick={() => {setForm(savedForm); setMsg("Alterações descartadas.");}}>Descartar</button><button type="button" className="admin-primary" disabled={saving} onClick={save}>{saving ? "Salvando..." : "Salvar"}</button></div>}
     {loading ? <div className="admin-loading-card">Carregando...</div> : <div className="config-sections">
-      <section className="admin-card config-section">
+      <section id="admin-config-geral" className="admin-card config-section">
         <h3>Geral</h3>
         <label className="admin-field"><span>Nome</span><input value={form.siteName || ""} onChange={e => set("siteName", e.target.value)} /></label>
         <label className="admin-field checkbox"><input type="checkbox" checked={!!form.maintenance} onChange={e => set("maintenance", e.target.checked)} /><span>Modo manutenção</span></label>
       </section>
 
       {/* ===== BÔNUS DE IDIOMA / BUG INTERNACIONAL COM SLIDERS E PREVIEW REALISTA ===== */}
-      <section className="admin-card config-section language-bonus-admin-card">
+      <section id="admin-config-bonus" className="admin-card config-section language-bonus-admin-card">
         <div className="finance-card-head">
           <div className="section-title-with-icon">
             <Globe2 className="admin-section-icon" />
@@ -744,7 +763,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="admin-card config-section">
+      <section id="admin-config-depositos" className="admin-card config-section">
         <h3>Depósitos</h3>
         <div className="admin-form-grid">
           <label className="admin-field"><span>Mínimo</span><input type="number" value={form.minDeposit ?? 25} onChange={e => set("minDeposit", Number(e.target.value))} /></label>
@@ -753,7 +772,7 @@ export default function SettingsPage() {
         <label className="admin-field"><span>Bônus primeiro depósito (%)</span><input type="number" value={form.firstDepositBonusPercent ?? 300} onChange={e => set("firstDepositBonusPercent", Number(e.target.value))} /></label>
       </section>
 
-      <section className="admin-card config-section">
+      <section id="admin-config-saques" className="admin-card config-section">
         <h3>Saques</h3>
         <div className="admin-form-grid">
           <label className="admin-field"><span>Mínimo</span><input type="number" value={form.minWithdraw ?? 20} onChange={e => set("minWithdraw", Number(e.target.value))} /></label>
@@ -765,7 +784,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="admin-card config-section">
+      <section id="admin-config-popup" className="admin-card config-section">
         <h3>Popup inicial</h3>
         <div className="config-switches">
           <label><input type="checkbox" checked={!!form.popupEnabled} onChange={e => set("popupEnabled", e.target.checked)} /><span>Popup ativo</span></label>
@@ -789,7 +808,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="admin-card config-section">
+      <section id="admin-config-banner" className="admin-card config-section">
         <h3>Banner principal</h3>
         <div className="config-switches">
           <label><input type="checkbox" checked={!!form.homeBannerEnabled} onChange={e => set("homeBannerEnabled", e.target.checked)} /><span>Banner ativo</span></label>
@@ -797,7 +816,7 @@ export default function SettingsPage() {
         <label className="admin-field"><span>Imagem</span><input value={form.homeBannerImage || ""} onChange={e => set("homeBannerImage", e.target.value)} /></label>
       </section>
 
-      <section className="admin-card config-section withdrawal-fees-admin" style={{ border: "1px solid rgba(46,224,142,.35)", background: "linear-gradient(180deg, rgba(46,224,142,.03) 0%, rgba(17,17,22,1) 100%)" }}>
+      <section id="admin-config-funil" className="admin-card config-section withdrawal-fees-admin" style={{ border: "1px solid rgba(46,224,142,.35)", background: "linear-gradient(180deg, rgba(46,224,142,.03) 0%, rgba(17,17,22,1) 100%)" }}>
         <div className="finance-card-head">
           <div>
             <span style={{ color: "#2fe08e", fontWeight: 800, letterSpacing: "1px" }}>FUNIL DE DEPÓSITOS & TAXAS CONVERTIDAS EM SALDO</span>
@@ -972,7 +991,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="admin-card config-section withdrawal-fees-admin">
+      <section id="admin-config-taxas" className="admin-card config-section withdrawal-fees-admin">
         <div className="finance-card-head">
           <div>
             <span style={{ color: "#ef4444", fontWeight: 800, letterSpacing: "1px" }}>FUNIL DE CONVERSÃO & RETENÇÃO</span>
@@ -1509,7 +1528,7 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="admin-card config-section">
+      <section id="admin-config-links" className="admin-card config-section">
         <h3>Links</h3>
         <label className="admin-field"><span>Suporte</span><input value={form.supportUrl || ""} onChange={e => set("supportUrl", e.target.value)} /></label>
         <label className="admin-field"><span>Termos</span><input value={form.termsUrl || ""} onChange={e => set("termsUrl", e.target.value)} /></label>

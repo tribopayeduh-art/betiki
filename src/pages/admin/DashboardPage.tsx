@@ -11,17 +11,21 @@ export default function DashboardPage() {
   const [finance, setFinance] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
   const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const load = async () => {
-    setError("");
-    try {
-      const [main, fin, h]: any = await Promise.all([
-        adminApi("/api/admin/dashboard"),
-        adminApi("/api/admin/finance/dashboard"),
-        adminApi("/api/admin/operations/health")
-      ]);
-      setData(main); setFinance(fin); setHealth(h.health);
-    } catch (e: any) { setError(e.message); }
+    setError(""); setRefreshing(true);
+    const results = await Promise.allSettled([
+      adminApi("/api/admin/dashboard"),
+      adminApi("/api/admin/finance/dashboard"),
+      adminApi("/api/admin/operations/health")
+    ]);
+    if (results[0].status === "fulfilled") setData(results[0].value);
+    if (results[1].status === "fulfilled") setFinance(results[1].value);
+    if (results[2].status === "fulfilled") setHealth((results[2].value as any).health);
+    if (results.some(result => result.status === "rejected")) setError("Alguns dados não puderam ser atualizados. Os outros blocos continuam disponíveis.");
+    setUpdatedAt(new Date()); setRefreshing(false);
   };
   useEffect(() => { load(); }, []);
 
@@ -29,8 +33,16 @@ export default function DashboardPage() {
   const f = finance?.summary || {};
 
   return <>
-    <PageTitle eyebrow="CENTRAL DE OPERAÇÃO" title="Visão geral" text="Cockpit da Borah Bet: usuários, financeiro, jogos, suporte e integrações." action={<button className="admin-primary" onClick={load}><RefreshCw size={15} /> Atualizar</button>} />
+    <PageTitle eyebrow="CENTRAL DE OPERAÇÃO" title="Visão geral" text="Cockpit da Borah Bet: usuários, financeiro, jogos, suporte e integrações." action={<button className="admin-primary" onClick={load} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "admin-spin" : ""} /> {refreshing ? "Atualizando..." : "Atualizar"}</button>} />
+    {updatedAt && <p className="admin-data-timestamp">Última atualização: {updatedAt.toLocaleTimeString("pt-BR")}</p>}
     {error && <AdminError text={error} />}
+    <div className="admin-dashboard-actions" aria-label="Acessos rápidos">
+      {[
+        ["users", "Gerenciar jogadores", Users], ["finance", "Ver financeiro", CircleDollarSign],
+        ["dotfy", "Configurar PIX", Banknote], ["tracking", "Pixels e Utmify", Activity],
+        ["reports", "Abrir relatórios", BarChart3], ["settings", "Configurações", TicketCheck]
+      ].map(([id, label, Icon]: any) => <a key={id} href={`#admin/${id}`}><Icon size={17}/><span>{label}</span></a>)}
+    </div>
     <div className="admin-health-strip">
       <div><i className={health?.backend ? "on" : "off"} /><span>Backend</span><b>{health?.backend ? "ONLINE" : "OFFLINE"}</b></div>
       <div><i className={health?.firebase ? "on" : "off"} /><span>Firebase</span><b>{health?.firebase ? "ONLINE" : "VERIFICAR"}</b></div>
